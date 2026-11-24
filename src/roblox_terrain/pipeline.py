@@ -357,6 +357,8 @@ def _validate(request: TerrainRequest) -> None:
         raise ValidationError("furrow_strength must be from 0 to 1.5.")
     if not 0 <= float(request.micro_detail) <= 2:
         raise ValidationError("micro_detail must be from 0 to 2.")
+    if not 0 <= int(request.edge_skirt_voxels) <= 80:
+        raise ValidationError("edge_skirt_voxels must be from 0 to 80.")
     if float(request.detail_radius_studs) < 0:
         raise ValidationError("detail_radius_studs cannot be negative.")
     bounds = (request.west, request.south, request.east, request.north)

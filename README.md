@@ -103,14 +103,17 @@ Saved config (`roblox-plugins config terrain --set key=value`) and the `generate
 | `field_style` | `auto` | `rectangular` or `irregular`. Auto follows the preset |
 | `boundary_style` | `auto` | `hedge`, `ditch`, `fence`, or `none` |
 | `field_size_m` | preset | `0` keeps the preset size. Cotswolds uses 110 m |
-| `vegetation_density` | `0.8` | 0 to 2 |
-| `tree_budget`, `rock_budget`, `hedge_budget` | 180, 40, 160 | Caps on parts |
+| `vegetation_density` | `0.8` | Used only when `tree_budget` is above 0 |
+| `tree_budget`, `rock_budget`, `hedge_budget` | 0, 0, 0 | Parts. The default write is terrain voxels only |
 | `detail_radius_studs` | `220` | Close-up crop patches only inside this radius |
-| `surface_patch_budget` | `420` | Cap on those patches |
-| `furrow_strength`, `micro_detail` | 0.7, 0.35 | Cultivation ripples and DEM roughness |
-| `stream_threshold` | `0` | `0` picks a catchment from the grid size |
+| `surface_patch_budget` | `0` | Crop patches. 0 writes none |
+| `furrow_strength`, `micro_detail` | 0.7, 0.35 | Cultivation ripples and DEM roughness. Both are sub-voxel |
+| `stream_threshold` | `0` | Ignored. The bed is the mapped river, or one drainage stem |
+| `edge_skirt_voxels` | `20` | Rim slopes down over this many voxels. 0 is a vertical cut |
+| `dress_materials` | true | Place-wide terrain tints. `clear_generated_terrain` restores them |
 | `origin_x_studs`, `origin_z_studs` | `0` | Where this window sits in the place |
-| `hide_baseplate`, `place_marker` | true | Baseplate hide is restored by clear |
+| `hide_baseplate` | true | Restored by clear |
+| `place_marker` | false | A marker part. Off unless you ask for one |
 | `allow_network` | false | Download tiles only when no file covers the bbox |
 | `dem_path` | empty | `.npz` or GeoTIFF |
 | `landcover_path` | empty | WorldCover GeoTIFF, or an npz of class ids 0–10 |
@@ -126,11 +129,11 @@ An `.npz` elevation file stores `elevation` plus `west`, `south`, `east`, `north
 
 1. Load elevation from the bundle, an `.npz`, a GeoTIFF, or AWS Terrain Tiles.
 2. Paint land cover from OpenStreetMap polygons, then an optional WorldCover raster.
-3. Fill only sub-meter pits, trace D8 drainage, and burn mapped waterways in.
+3. Fill only sub-meter pits. When a mapped river is in the source, the play window sits on it and the bed is that line, shifted sideways into the valley. With no map, one drainage stem is cut. The channel is a shallow valley about 40 m wide, not a one-cell slot.
 4. Keep OSM fields that are already about a field in size. Subdivide larger farmland along the contour.
 5. Add furrows, hedges or ditches, and a light roughness the DEM does not carry.
-6. Assign Roblox materials from cover, slope, and water. Place trees, orchard rows, hedges, fences, and rocks inside the budgets.
-7. Resample onto 4-stud voxels in chunks. Close-up crop color is a part layer, because `SetMaterialColor` is global and a 4-stud voxel is too coarse for a furrow.
+6. Assign Roblox materials from cover, slope, and water. Trees, hedges, rocks, and crop patches are placed only when their budgets are above 0. The defaults are 0.
+7. Resample onto 4-stud voxels. The outer columns slope down to a low contour so the window is not a vertical-sided block. A channel that reaches the rim keeps its bed. A confirmed apply can tint Grass, Ground, Rock, and water for this place, and clear puts the old colors back.
 
 The folder `Workspace.RealisticTerrain` keeps the manifest on a `SceneJson` StringValue, one folder per field, and attributes for the preset, seed, and voxel box. An agent can move, recolor, or delete those instances afterwards with the adapter's data-model tools.
 
@@ -142,7 +145,7 @@ The scene records only the sources it actually used.
 
 **Land cover and waterways, bundled example.** © OpenStreetMap contributors, [Open Database License](https://www.openstreetmap.org/copyright). The crop has 66 polygons (pasture, woodland, cropland, urban, water, one orchard, one scrub) and two waterways. ESA WorldCover is supported as a local GeoTIFF (classes 10–100) and is not fetched. WorldCover contains modified Copernicus Sentinel data: https://esa-worldcover.org/en/data-access
 
-**Hydrology.** Computed here: priority-flood, D8, and flow accumulation, with mapped waterways burned in. A HydroSHEDS accumulation grid can be passed as `hydro_path`. HydroSHEDS (Lehner, Verdin, Jarvis, 2008) has its own license; keep that notice with the file you supply. https://www.hydrosheds.org/
+**Hydrology.** Computed here: priority-flood and D8. A mapped waterway is shifted into the valley and cut as one bed. With no map, only the main stem is cut. A HydroSHEDS accumulation grid can be passed as `hydro_path`. HydroSHEDS (Lehner, Verdin, Jarvis, 2008) has its own license; keep that notice with the file you supply. https://www.hydrosheds.org/
 
 The crop and this attribution also live in `src/roblox_terrain/data/SOURCES.txt`. Rebuild the crop, when you still have the tiles and the OSM extract, with `python tools/build_sample.py`.
 
@@ -153,7 +156,7 @@ The crop and this attribution also live in `src/roblox_terrain/data/SOURCES.txt`
 - One call frames one play window. A 1.5 km extract is several windows. Use `plan_tiles`, then generate each tile with that tile's bounds and origin.
 - The plugin warns above about 80 voxel chunks and refuses a request above about 200 chunks or 8 million voxels. A 400 m window at 2 studs per meter stays inside that.
 - Each voxel chunk is one `execute_luau` call with `task.wait` every six columns, and under one million voxels. Instance creates go through the adapter's chunked apply.
-- Hedges and trunks collide. Field carpets, fences, and canopies do not. Trees are cylinders whose long axis is turned upright. Names have no dots, so the adapter can address them.
+- The default apply is the voxel terrain: elevation, materials, and water. Set `tree_budget`, `hedge_budget`, `rock_budget`, or `surface_patch_budget` above 0 to add those parts. Hedges and trunks collide. Canopies do not. Trees, when requested, are cylinders whose long axis is turned upright. Names have no dots, so the adapter can address them.
 - OpenStreetMap in this extract is hedgerows, woods, and farm polygons, not a complete crop map. Unlabeled agricultural cover is subdivided procedurally. WorldCover is the fallback raster when you have a file.
 - Terrarium is coarser than a survey DEM and is already a blend of sources. Do not treat the result as an elevation certificate.
 - `synthetic-valley` must not be described as a surveyed place.

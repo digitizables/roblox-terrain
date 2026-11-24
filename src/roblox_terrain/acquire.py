@@ -320,7 +320,9 @@ def _frame(
         stream |= rasterize_polyline(rough, line.coords, width=1)
     agri = np.isin(cover, (BY_NAME["cropland"], BY_NAME["pasture"], BY_NAME["orchard"])).astype(np.float64)
     forest = (cover == BY_NAME["forest"]).astype(np.float64)
-    score = agri + 0.2 * forest + 0.35 * stream.astype(np.float64)
+    # A mapped river has to fall inside the window. A pasture-only score
+    # previously framed the Windrush out and left a straight hillside ditch.
+    score = agri + 0.2 * forest + 40.0 * stream.astype(np.float64)
     win_rows = max(4, min(rough.rows, int(round(play_extent_m / rough.cell_height_m))))
     win_cols = max(4, min(rough.cols, int(round(play_extent_m / rough.cell_width_m))))
     integral = np.pad(score, ((1, 0), (1, 0))).cumsum(0).cumsum(1)
@@ -345,7 +347,7 @@ def _burn_water(grid: GeoGrid, vectors: VectorSet) -> tuple[np.ndarray, np.ndarr
     streams = np.zeros((grid.rows, grid.cols), dtype=bool)
     lakes = np.zeros((grid.rows, grid.cols), dtype=bool)
     for line in vectors.lines:
-        width = 2 if line.kind == "river" else 1
+        width = 1
         streams |= rasterize_polyline(grid, line.coords, width=width)
     from roblox_terrain.raster import rasterize_polygon
 

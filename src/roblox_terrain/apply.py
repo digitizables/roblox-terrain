@@ -36,8 +36,9 @@ def impact(scene: TerrainScene) -> str:
         "This will edit the open Studio place. It does not save or publish.\n"
         f"- Replace terrain voxels in a box about {width} by {depth} studs ({chunks} chunks) "
         f"centered near ({scene.parameters.get('origin_x_studs', 0)}, {scene.parameters.get('origin_z_studs', 0)}).\n"
-        f"- Replace Workspace.RealisticTerrain ({len(scene.fields)} fields, {len(scene.props)} props, "
-        "plus close-up field patches inside the detail radius).\n"
+        f"- Replace Workspace.RealisticTerrain. The default write is voxels only "
+        f"({len(scene.props)} props when a budget is set above 0).\n"
+        "- Slope the outer voxels down so the window is not a vertical-sided block.\n"
         f"{baseplate}"
         "- Stop a running solo playtest so the write runs in the Edit datamodel.\n"
         "Re-run with confirm=True or ROBLOX_STUDIO_CONFIRM=1. Nothing was written."
@@ -69,6 +70,9 @@ def apply_scene(port: Any, scene: TerrainScene, *, confirm: bool, progress: Prog
                 )
             written += 1
             report("voxels", 0.05 + 0.7 * written / max(1, len(plan.chunks)), f"chunk {written}/{len(plan.chunks)}")
+        if scene.parameters.get("dress_materials", True):
+            port.execute(_dress_materials_script())
+            report("materials", 0.8, "terrain colors")
     except ApplyError:
         raise
     except Exception as exc:
@@ -491,6 +495,76 @@ def _json_backup(payload: dict) -> dict:
     }
 
 
+def _dress_materials_script() -> str:
+    """Tint this place's terrain toward meadow, soil, limestone, and river water.
+
+    The previous colors are stored on RealisticTerrain so clear can put them back.
+    SetMaterialColor is place-wide. That is the trade for a ground that is not
+    the engine's default plastic green.
+    """
+    return """
+local HttpService = game:GetService("HttpService")
+local terrain = workspace.Terrain
+local folder = workspace:FindFirstChild("RealisticTerrain")
+local targets = {
+    Grass = {106, 122, 68},
+    LeafyGrass = {78, 104, 52},
+    Ground = {128, 108, 74},
+    Mud = {90, 76, 58},
+    Rock = {132, 128, 120},
+    Sandstone = {174, 156, 122},
+    Limestone = {186, 176, 152},
+    Slate = {112, 114, 110},
+    Sand = {190, 174, 136},
+    Water = {58, 104, 114},
+}
+local previous = {}
+if folder and not folder:FindFirstChild("MaterialColorBackup") then
+    for name in pairs(targets) do
+        local matOk, mat = pcall(function()
+            return Enum.Material[name]
+        end)
+        if matOk then
+            local colorOk, color = pcall(function()
+                return terrain:GetMaterialColor(mat)
+            end)
+            if colorOk then
+                previous[name] = { color.R, color.G, color.B }
+            end
+        end
+    end
+    local water = {
+        color = { terrain.WaterColor.R, terrain.WaterColor.G, terrain.WaterColor.B },
+        transparency = terrain.WaterTransparency,
+        reflectance = terrain.WaterReflectance,
+        waveSize = terrain.WaterWaveSize,
+        waveSpeed = terrain.WaterWaveSpeed,
+    }
+    local record = Instance.new("StringValue")
+    record.Name = "MaterialColorBackup"
+    record.Value = HttpService:JSONEncode({ materials = previous, water = water })
+    record.Parent = folder
+end
+for name, rgb in pairs(targets) do
+    local matOk, mat = pcall(function()
+        return Enum.Material[name]
+    end)
+    if matOk then
+        pcall(function()
+            terrain:SetMaterialColor(mat, Color3.fromRGB(rgb[1], rgb[2], rgb[3]))
+        end)
+    end
+end
+terrain.WaterColor = Color3.fromRGB(58, 104, 114)
+terrain.WaterTransparency = 0.2
+terrain.WaterReflectance = 0.3
+terrain.WaterWaveSize = 0.06
+terrain.WaterWaveSpeed = 6
+task.wait()
+return HttpService:JSONEncode({ ok = true, dressed = true })
+""".strip()
+
+
 def _hide_baseplate_script() -> str:
     return """
 local HttpService = game:GetService("HttpService")
@@ -532,6 +606,47 @@ if minX and minY and minZ and maxX and maxY and maxZ and maxX > minX and maxY > 
     local center = Vector3.new((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2)
     workspace.Terrain:FillBlock(CFrame.new(center), size, Enum.Material.Air)
     task.wait()
+end
+local colors = folder:FindFirstChild("MaterialColorBackup")
+if colors and colors:IsA("StringValue") and colors.Value ~= "" then
+    local decoded, data = pcall(function()
+        return HttpService:JSONDecode(colors.Value)
+    end)
+    if decoded and type(data) == "table" then
+        local terrain = workspace.Terrain
+        if type(data.materials) == "table" then
+            for name, rgb in pairs(data.materials) do
+                local matOk, mat = pcall(function()
+                    return Enum.Material[name]
+                end)
+                if matOk and type(rgb) == "table" and rgb[1] and rgb[2] and rgb[3] then
+                    pcall(function()
+                        terrain:SetMaterialColor(mat, Color3.new(rgb[1], rgb[2], rgb[3]))
+                    end)
+                end
+            end
+        end
+        if type(data.water) == "table" then
+            local water = data.water
+            pcall(function()
+                if type(water.color) == "table" then
+                    terrain.WaterColor = Color3.new(water.color[1], water.color[2], water.color[3])
+                end
+                if type(water.transparency) == "number" then
+                    terrain.WaterTransparency = water.transparency
+                end
+                if type(water.reflectance) == "number" then
+                    terrain.WaterReflectance = water.reflectance
+                end
+                if type(water.waveSize) == "number" then
+                    terrain.WaterWaveSize = water.waveSize
+                end
+                if type(water.waveSpeed) == "number" then
+                    terrain.WaterWaveSpeed = water.waveSpeed
+                end
+            end)
+        end
+    end
 end
 local restored = false
 local backupValue = folder:FindFirstChild("BaseplateBackup")

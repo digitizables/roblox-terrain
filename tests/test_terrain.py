@@ -35,7 +35,7 @@ from roblox_terrain.pngutil import read_rgb_png, terrarium_elevation
 from roblox_terrain.raster import rasterize_ring
 from roblox_terrain.surface import MATERIAL_INDEX, assign_materials
 from roblox_terrain.vectors import VectorSet, load_vectors
-from roblox_terrain.voxels import _pack, chunk_script, decode_payload, plan_voxels
+from roblox_terrain.voxels import _pack, chunk_script, decode_payload, plan_voxels, present_columns
 from roblox_studio_plugin_host.cli import main
 
 
@@ -50,6 +50,33 @@ def _png(width: int, height: int, rows: list[bytes]) -> bytes:
 
     ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
     return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
+
+
+def _component_sizes(mask: np.ndarray) -> list[int]:
+    seen = np.zeros(mask.shape, dtype=bool)
+    sizes: list[int] = []
+    rows, cols = mask.shape
+    neighbors = ((-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1))
+    for row in range(rows):
+        for col in range(cols):
+            if not mask[row, col] or seen[row, col]:
+                continue
+            stack = [(row, col)]
+            seen[row, col] = True
+            count = 0
+            while stack:
+                r, c = stack.pop()
+                count += 1
+                for d_row, d_col in neighbors:
+                    n_row, n_col = r + d_row, c + d_col
+                    if n_row < 0 or n_col < 0 or n_row >= rows or n_col >= cols:
+                        continue
+                    if seen[n_row, n_col] or not mask[n_row, n_col]:
+                        continue
+                    seen[n_row, n_col] = True
+                    stack.append((n_row, n_col))
+            sizes.append(count)
+    return sizes
 
 
 def _paeth(left: int, up: int, up_left: int) -> int:
@@ -170,6 +197,26 @@ class RasterAndWaterTests(unittest.TestCase):
         self.assertEqual(int(materials[1, 1]), MATERIAL_INDEX["Water"])
         self.assertEqual(int(materials[2, 2]), MATERIAL_INDEX["Rock"])
 
+    def test_mapped_line_moves_into_the_valley(self) -> None:
+        rows, cols = 48, 48
+        column = np.arange(cols, dtype=np.float64)
+        valley = 24.0 * np.exp(-0.5 * ((column - 20.0) / 2.2) ** 2)
+        dem = np.broadcast_to(120.0 - valley, (rows, cols)).copy()
+        dem += np.linspace(6.0, 0.0, rows)[:, None]
+        mask = np.zeros(dem.shape, dtype=bool)
+        mask[1:-1, 10] = True
+        hydro = derive(dem, cell_h=4.0, cell_w=4.0, stream_mask=mask)
+        wet = hydro.water_depth > 0.5
+        self.assertGreater(int(wet.sum()), 20)
+        mid = np.flatnonzero(wet[rows // 2])
+        self.assertGreater(mid.size, 0)
+        self.assertLess(abs(float(mid.mean()) - 20.0), 2.5)
+        self.assertFalse(bool(wet[rows // 2, 10]))
+        self.assertGreater(float(hydro.water_depth[rows // 2, 20]), 1.5)
+        self.assertLess(float(hydro.surface[wet].mean()), float(hydro.surface[~wet].mean()) - 1.0)
+        sizes = _component_sizes(wet)
+        self.assertEqual(len(sizes), 1)
+
 
 class SceneTests(unittest.TestCase):
     def test_synthetic_scene_respects_budgets_and_part_frames(self) -> None:
@@ -237,6 +284,33 @@ class SceneTests(unittest.TestCase):
             self.assertIn("WriteVoxels", script)
             self.assertIn("Enum.Material.Rock", script)
             self.assertIsNone(yield_risk(script))
+
+    def test_default_request_is_terrain_without_props(self) -> None:
+        request = TerrainRequest()
+        self.assertEqual(request.tree_budget, 0)
+        self.assertEqual(request.hedge_budget, 0)
+        self.assertEqual(request.rock_budget, 0)
+        self.assertEqual(request.surface_patch_budget, 0)
+        self.assertFalse(request.place_marker)
+
+    def test_skirt_drops_the_rim_and_keeps_the_middle(self) -> None:
+        surface = np.full((40, 40), 40.0)
+        surface[20, 20] = 90.0
+        materials = np.full((40, 40), MATERIAL_INDEX["Grass"], dtype=np.int32)
+        surface[1, 30] = 70.0
+        water = np.zeros((40, 40))
+        water[20, 18:23] = 0.8
+        water[1, 30] = 2.0
+        shaped, painted, wet = present_columns(surface, materials, water, skirt_voxels=8)
+        self.assertAlmostEqual(float(shaped[20, 20]), 90.0, places=3)
+        self.assertLess(float(shaped[0, 20]), float(shaped[20, 20]))
+        self.assertEqual(float(wet[0, 20]), 0.0)
+        self.assertEqual(float(wet[20, 17]), 0.0)
+        self.assertGreater(float(wet[20, 18]), 0.0)
+        self.assertAlmostEqual(float(shaped[1, 30]), 70.0, places=3)
+        self.assertAlmostEqual(float(wet[1, 30]), 2.0, places=3)
+        self.assertEqual(int(painted[1, 30]), MATERIAL_INDEX["Grass"])
+        self.assertEqual(int(painted[0, 20]), MATERIAL_INDEX["Ground"])
         self.assertEqual(_upright_cylinder(0, 1, 0)["components"][6], 1.0)
         yawed = _yawed(0, 0, 0, (0.0, 0.0, -1.0))
         self.assertEqual(yawed["components"][9], -1.0)
@@ -291,6 +365,28 @@ class SceneTests(unittest.TestCase):
         names = {source["name"] for source in scene.sources}
         self.assertIn("AWS Terrain Tiles (Terrarium)", names)
         self.assertIn("OpenStreetMap", names)
+        river = generate_realistic_terrain(
+            TerrainRequest(preset="cotswolds-windrush", grid_size=64, seed=1)
+        )
+        wet = river.water_depth_m >= 0.5
+        self.assertGreater(int(river.stats["stream_cells"]), 8)
+        self.assertGreater(int(wet.sum()), 20)
+        row_i, col_i = np.nonzero(wet)
+        span = max(int(row_i.max() - row_i.min()), int(col_i.max() - col_i.min()))
+        self.assertGreater(span, wet.shape[0] // 4)
+        self.assertGreater(float(wet.sum()) / (span + 1), 1.5)
+        self.assertLess(float(river.heights_m[wet].mean()), float(river.heights_m[~wet].mean()) - 1.0)
+        sizes = _component_sizes(wet)
+        self.assertGreater(max(sizes) / sum(sizes), 0.6)
+        deep = False
+        for chunk in plan_voxels(river).chunks:
+            for bed, water, _surface_mat, _fill_mat in decode_payload(chunk.payload, chunk.size_x, chunk.size_z):
+                if water >= bed + 8:
+                    deep = True
+                    break
+            if deep:
+                break
+        self.assertTrue(deep)
         with self.assertRaises(DataUnavailable):
             generate_realistic_terrain(
                 TerrainRequest(

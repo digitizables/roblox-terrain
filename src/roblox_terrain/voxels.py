@@ -89,6 +89,8 @@ def plan_voxels(scene: TerrainScene) -> VoxelPlan:
     water_m = _resample(scene.water_depth_m, voxels_z, voxels_x, nearest=False)
     materials = _resample(scene.materials, voxels_z, voxels_x, nearest=True).astype(np.int32)
     surface = np.asarray(scene.surface_studs(heights), dtype=np.float64)
+    skirt = int(scene.parameters.get("edge_skirt_voxels", 20) or 0)
+    surface, materials, water_m = present_columns(surface, materials, water_m, skirt_voxels=skirt)
     water_surface = surface + np.maximum(water_m, 0) * exaggeration * studs
     base_y = _align_down(float(np.min(surface)) - 12.0)
     origin_x = _align_down(float(scene.parameters["origin_x_studs"]) - (voxels_x * VOXEL_STUDS) / 2)
@@ -209,6 +211,45 @@ terrain:WriteVoxels(region, resolution, materials, occupancy)
 task.wait()
 return HttpService:JSONEncode({{ ok = true, chunk = {chunk.index}, voxels = sizeX * sizeY * sizeZ }})
 """.strip()
+
+
+def present_columns(
+    surface: np.ndarray,
+    materials: np.ndarray,
+    water_depth: np.ndarray,
+    *,
+    skirt_voxels: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Turn the analysis grid into a voxel surface.
+
+    The play window is a rectangle. Filling every column up to the DEM and
+    stopping at that rectangle leaves a sheer dirt wall. The outer columns
+    ease down to a low contour so the edge is a bank. A channel that already
+    reaches the rim keeps its bed and its water. Dry neighbors are not filled
+    in to fake a wider river.
+    """
+    shaped = np.asarray(surface, dtype=np.float64).copy()
+    painted = np.asarray(materials).copy()
+    water = np.asarray(water_depth, dtype=np.float64).copy()
+    channel = water >= 0.15
+    rows, cols = shaped.shape
+    if skirt_voxels > 0 and rows > 2 and cols > 2:
+        width = min(int(skirt_voxels), (min(rows, cols) - 1) // 2)
+        row_dist = np.minimum(np.arange(rows), np.arange(rows)[::-1])
+        col_dist = np.minimum(np.arange(cols), np.arange(cols)[::-1])
+        distance = np.minimum(row_dist[:, None], col_dist[None, :])
+        blend = np.clip(distance / max(width, 1), 0.0, 1.0)
+        blend = blend * blend * (3.0 - 2.0 * blend)
+        floor = float(np.percentile(shaped, 12))
+        eased = floor + (shaped - floor) * blend
+        shaped = np.where(channel, shaped, eased)
+        skirt = distance < width
+        toe = distance <= max(2, width // 5)
+        bank = skirt & ((np.asarray(surface) - floor) > 16.0) & (distance < width * 0.55)
+        painted[toe & ~channel] = MATERIAL_INDEX["Ground"]
+        painted[bank & ~channel] = MATERIAL_INDEX["Rock"]
+        water[skirt & ~channel] = 0.0
+    return shaped.astype(np.float64), painted, water.astype(np.float64)
 
 
 def decode_payload(payload: str, size_x: int, size_z: int) -> list[tuple[int, int, int, int]]:

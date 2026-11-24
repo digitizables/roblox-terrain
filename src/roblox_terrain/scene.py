@@ -39,18 +39,20 @@ class TerrainRequest:
     boundary_style: str = "auto"
     field_size_m: float = 0.0
     vegetation_density: float = 0.8
-    tree_budget: int = 180
-    rock_budget: int = 40
-    hedge_budget: int = 160
+    tree_budget: int = 0
+    rock_budget: int = 0
+    hedge_budget: int = 0
     detail_radius_studs: float = 220.0
-    surface_patch_budget: int = 420
+    surface_patch_budget: int = 0
     furrow_strength: float = 0.7
     micro_detail: float = 0.35
     stream_threshold: int = 0
+    edge_skirt_voxels: int = 20
+    dress_materials: bool = True
     origin_x_studs: float = 0.0
     origin_z_studs: float = 0.0
     hide_baseplate: bool = True
-    place_marker: bool = True
+    place_marker: bool = False
     allow_network: bool = False
     dem_path: str = ""
     landcover_path: str = ""
@@ -98,6 +100,8 @@ _PUBLIC = (
     "furrow_strength",
     "micro_detail",
     "stream_threshold",
+    "edge_skirt_voxels",
+    "dress_materials",
     "origin_x_studs",
     "origin_z_studs",
     "hide_baseplate",
