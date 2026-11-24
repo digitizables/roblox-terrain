@@ -1,0 +1,16 @@
+Cotswolds Windrush extract, cropped for the bundled example.
+
+Elevation
+  AWS Open Data Terrain Tiles, Terrarium PNG, zoom 14, tiles X 8110-8111
+  and Y 5417-5418, cropped to 51.905 N-51.920 N and 1.790 W-1.768 W.
+  The tiles are a Tilezen composite (NASA SRTM plus regional models; over
+  Europe that is commonly EU-DEM). They are not a raw Copernicus GLO-30 file.
+  https://registry.opendata.aws/terrain-tiles/
+  https://github.com/tilezen/joerd/blob/master/docs/attribution.md
+
+Land cover and waterways
+  (c) OpenStreetMap contributors. Available under the Open Database License.
+  https://www.openstreetmap.org/copyright
+
+The files in this directory are a small crop so the example runs offline.
+They are not a redistribution of the full datasets.

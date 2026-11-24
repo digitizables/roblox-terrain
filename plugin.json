@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "id": "terrain",
+  "module": "roblox_terrain.plugin",
+  "attribute": "PLUGIN",
+  "src": "src"
+}

@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "roblox-terrain"
+version = "0.1.0"
+description = "Realistic terrain plugin for roblox-studio-adapter. Real elevation and land cover, refined into fields, drainage, and close-up detail."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Paul Beck" }]
+keywords = ["roblox", "terrain", "dem", "landcover"]
+dependencies = [
+    "numpy",
+    "roblox-studio-plugin-host",
+    "roblox-studio-adapter",
+]
+
+[project.optional-dependencies]
+geotiff = ["rasterio"]
+
+[project.entry-points."roblox_studio.plugins"]
+terrain = "roblox_terrain.plugin:PLUGIN"
+
+[project.urls]
+Homepage = "https://github.com/digitizables/roblox-terrain"
+Repository = "https://github.com/digitizables/roblox-terrain"
+Adapter = "https://github.com/digitizables/roblox-studio-adapter"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+roblox_terrain = ["py.typed", "data/*"]
